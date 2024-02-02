@@ -1,4 +1,5 @@
 function dft_He(; N::Int64, r_min::Float64, r_max::Float64, prec::Float64, max_iter::Int64)
+    # Array to store total energies during iterations
     ens = Float64[]
 
     # Constants
@@ -6,11 +7,11 @@ function dft_He(; N::Int64, r_min::Float64, r_max::Float64, prec::Float64, max_i
     N_elec = 2
     q_nucl = 2
 
-    # Arrays
+    # Arrays for radial coordinates, electron density, and potentials
     R = (0:N-1) .* step .+ r_min
     rho, V_nuc, V_hart, V_exch, V_corr, V, U = zeros(N), zeros(N), zeros(N), zeros(N), zeros(N), zeros(N), zeros(N)
 
-    # Parameters
+    # Parameters for the correlation potential
     a, b, c, d, gamma, beta1, beta2 = 0.0311, -0.048, 0.002, -0.0116, -0.1423, 1.0529, 0.3334
 
     # Energy bounds
@@ -20,7 +21,7 @@ function dft_He(; N::Int64, r_min::Float64, r_max::Float64, prec::Float64, max_i
     prev_E_tot, E_tot, E_n = 1.0, 0.0, 0.0
     niter = 0
 
-    # Main loop
+    # Main loop for self-consistent iteration
     while abs(prev_E_tot - E_tot) > prec
         if niter == max_iter
             break
@@ -31,11 +32,10 @@ function dft_He(; N::Int64, r_min::Float64, r_max::Float64, prec::Float64, max_i
         # Nuclear potential
         V_nuc .= -q_nucl ./ R
 
-        # Hartree potential calculation
+        # Hartree potential calculation using finite differences
         U_hart = zeros(N)
         U_hart[1:2] .= 0
-        hart_rng = 2:N-1
-        for i in hart_rng
+        for i in 2:N-1
             U_hart[i+1] = 2.0 * U_hart[i] - U_hart[i-1] - step^2 * rho[i] / R[i]
         end
         alpha = (N_elec - U_hart[N]) / R[N]
@@ -45,7 +45,7 @@ function dft_He(; N::Int64, r_min::Float64, r_max::Float64, prec::Float64, max_i
         # Exchange potential
         V_exch .= -((3 * rho) ./ (4 * π^2 * R .^ 2)) .^ (1.0 / 3.0)
 
-        # Correlation potential
+        # Correlation potential calculation
         for i in 1:N
             if rho[i] < 1e-10
                 V_corr[i] = 0.0
@@ -65,7 +65,7 @@ function dft_He(; N::Int64, r_min::Float64, r_max::Float64, prec::Float64, max_i
         # Total potential
         V .= V_nuc + V_hart + V_exch + V_corr
 
-        # Electron energy levels
+        # Electron energy levels calculation using binary search
         n, l, hse_prec = 1, 0, 1.0e-9
         E_max, E_min = 0.0, -20.0
         E_n = 0.0
@@ -74,13 +74,11 @@ function dft_He(; N::Int64, r_min::Float64, r_max::Float64, prec::Float64, max_i
             E_n = (E_min + E_max) / 2.0
 
             U[N-1:N] .= R[N-1:N] .* exp.(-R[N-1:N])
-            U_rng = N-1:-1:2
-            for i in U_rng
+            for i in N-1:-1:2
                 U[i-1] = 2 * U[i] - U[i+1] + step^2 * (-2.0 * E_n + 2 * V[i]) * U[i]
             end
 
-            n_rng = 1:N-1
-            nodes = sum(U[n_rng] .* U[n_rng.+1] .< 0)
+            nodes = sum(U[1:N-1] .* U[2:N] .< 0)
             nodes > n - l - 1 ? (E_max = E_n) : (E_min = E_n)
         end
 
@@ -89,23 +87,21 @@ function dft_He(; N::Int64, r_min::Float64, r_max::Float64, prec::Float64, max_i
         U ./= sqrt(norm * step)
         rho .= 2 .* U .^ 2
 
-        # Energy contributions
-        E_hart = sum(V_hart .* rho) / 2.0
-        final_V_hart = E_hart * step
+        # Energy contributions calculation
+        E_hart = sum(V_hart .* rho) / 2.0 * step
+        E_exch = sum(V_exch .* rho) / 2.0 * step
+        E_corr = sum(V_corr .* rho) / 2.0 * step
 
-        E_exch = sum(V_exch .* rho) ./ 2.0
-        final_V_exch = E_exch * step
+        # Total energy calculation
+        E_tot = 2.0 * E_n - E_hart - (E_exch - E_corr) / 2.0
 
-        E_corr = sum(V_corr .* rho) ./ 2.0
-        final_V_corr = E_corr * step
-
-        # Total energy
-        E_tot = 2.0 * E_n - final_V_hart - (final_V_exch - final_V_corr) / 2.0
-
+        # Append total energy to the results array
         append!(ens, E_tot)
     end
 
     return ens
 end
 
+# Example usage
 res = @time dft_He(N=4096, r_min=1e-4, r_max=50.0, prec=1e-6, max_iter=10)
+println(last(res))
